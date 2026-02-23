@@ -1,0 +1,69 @@
+Query: SELECT split(string=reformat(artifact=Simple).Artifact, sep="\\n") AS Simple, split(string=reformat(artifact=SingleLine).Artifact, sep="\\n") AS SingleLine, split(string=reformat(artifact=Exported).Artifact, sep="\\n") AS Exported, split(string=reformat(artifact=Preconditions).Artifact, sep="\\n") AS Preconditions, split(string=reformat(artifact=Notebook).Artifact, sep="\\n") AS Notebook, split(string=reformat(artifact=ColumnTypes).Artifact, sep="\\n") AS ColumnTypes FROM scope()
+Output: [
+ {
+  "Simple": [
+   "name: Foo",
+   "sources:",
+   "- query: |",
+   "    SELECT A,",
+   "           B,",
+   "           C",
+   "    FROM info(arg1=Foobar, arg2=\"XXXXX\")",
+   "- query: |-",
+   "    SELECT A,",
+   "           B,",
+   "           C",
+   "    FROM info()",
+   "- description: Foo bar"
+  ],
+  "SingleLine": [
+   "name: Single line",
+   "sources:",
+   "- query: SELECT * FROM info()",
+   "- query: |",
+   "    SELECT A",
+   "    FROM scope()"
+  ],
+  "Exported": [
+   "name: Exported",
+   "export: |",
+   "  SELECT *",
+   "  FROM scope()"
+  ],
+  "Preconditions": [
+   "name: Preconditions",
+   "precondition: SELECT * FROM info()",
+   "sources:",
+   "- precondition: |",
+   "    SELECT *",
+   "    FROM info()"
+  ],
+  "Notebook": [
+   "name: Notebook",
+   "sources:",
+   "- query: |",
+   "    SELECT A,",
+   "           B,",
+   "           C",
+   "    FROM scope()",
+   "  notebook:",
+   "    - name: Test",
+   "      type: vql_suggestion",
+   "      template: |",
+   "        SELECT * FROM scope()"
+  ],
+  "ColumnTypes": [
+   "name: Column Types",
+   "sources:",
+   "- query: |",
+   "    SELECT A,",
+   "           B,",
+   "           C",
+   "    FROM scope()",
+   "column_types:",
+   "  - name: A",
+   "    type: string"
+  ]
+ }
+]
+

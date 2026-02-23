@@ -2,19 +2,21 @@ package main
 
 import (
 	"fmt"
-	"os"
+	"log"
+	"path/filepath"
 
+	"github.com/Velocidex/ordereddict"
 	"www.velocidex.com/golang/velociraptor/config"
-	"www.velocidex.com/golang/velociraptor/constants"
 	logging "www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/startup"
-	"www.velocidex.com/golang/velociraptor/utils"
+	"www.velocidex.com/golang/velociraptor/vql/acl_managers"
 )
 
 var (
-	reformat      = artifact_command.Command("reformat", "Reformat a set of artifacts")
-	reformat_args = reformat.Arg("paths", "Paths to artifact yaml files").Required().Strings()
+	reformat         = artifact_command.Command("reformat", "Reformat a set of artifacts")
+	reformat_dry_run = reformat.Flag("dry", "Do not overwrite files, just report errors").Bool()
+	reformat_args    = reformat.Arg("paths", "Paths to artifact yaml files").Required().Strings()
 )
 
 func doReformat() error {
@@ -38,60 +40,47 @@ func doReformat() error {
 		return err
 	}
 
-	manager, err := services.GetRepositoryManager(config_obj)
-	if err != nil {
-		return err
-	}
-
 	logger := logging.GetLogger(config_obj, &logging.ToolComponent)
 
-	// Report all errors and keep going as much as possible.
-	returned_errs := make(map[string]error)
-
+	var artifact_paths []string
 	for _, artifact_path := range *reformat_args {
-		returned_errs[artifact_path] = nil
-
-		fd, err := os.Open(artifact_path)
+		abs, err := filepath.Abs(artifact_path)
 		if err != nil {
-			returned_errs[artifact_path] = err
+			logger.Error("reformat: could not get absolute path for %v", artifact_path)
 			continue
 		}
 
-		data, err := utils.ReadAllWithLimit(fd, constants.MAX_MEMORY)
-		if err != nil {
-			returned_errs[artifact_path] = err
-			fd.Close()
-			continue
-		}
-		fd.Close()
-
-		reformatted, err := manager.ReformatVQL(ctx, string(data))
-		if err != nil {
-			returned_errs[artifact_path] = err
-			continue
-		}
-
-		out_fd, err := os.OpenFile(artifact_path,
-			os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0600)
-		if err != nil {
-			returned_errs[artifact_path] = err
-			continue
-		}
-		_, _ = out_fd.Write([]byte(reformatted))
-		out_fd.Close()
+		artifact_paths = append(artifact_paths, abs)
 	}
 
-	var ret error
-	for artifact_path, err := range returned_errs {
-		if err != nil {
-			logger.Error("%v: <red>%v</>", artifact_path, err)
-			ret = err
-		} else {
-			logger.Info("Reformatted %v: <green>OK</>", artifact_path)
-		}
+	artifact_logger := &LogWriter{config_obj: sm.Config}
+	builder := services.ScopeBuilder{
+		Config:     sm.Config,
+		ACLManager: acl_managers.NewRoleACLManager(sm.Config, "administrator"),
+		Logger:     log.New(artifact_logger, "", 0),
+		Env: ordereddict.NewDict().
+			Set("DryRun", *reformat_dry_run).
+			Set("Artifacts", artifact_paths),
 	}
 
-	return ret
+	query := `
+      SELECT reformat(artifact=read_file(filename=_value)) AS Result
+        FROM foreach(row=Artifacts)
+      WHERE if(condition=Result.Error,
+          then=log(level="ERROR", message="%v: <red>%v</>",
+                   args=[_value, Result.Error], dedup=-1),
+          else=log(message="Reformatted %v: <green>OK</>",
+                   args=_value, dedup=-1)
+               AND NOT DryRun
+               AND copy(accessor="data", dest=_value, filename=Result.Artifact))
+       AND FALSE
+    `
+	err = runQueryWithEnv(query, builder, "json")
+	if err != nil {
+		logger.Error("reformat: error running query: %v", query)
+	}
+
+	return artifact_logger.Error
 }
 
 func init() {
